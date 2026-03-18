@@ -23,7 +23,7 @@ import zipfile
 
 # UTF-8 byte sequences for variation selectors.
 # Range 1: ef b8 [80-8f]
-# Range 2: f3 a0 [84-87] [80-af]
+# Range 2: f3 a0 [84-87] [80-bf*] (*af when third byte is 87)
 
 # Signatures are split so the detector doesn't flag itself.
 # The Glassworm decoder is a specific composite pattern: a function
@@ -33,10 +33,12 @@ import zipfile
 # legitimate code. Only the combination is an IoC.
 
 # Composite decoder: the range-check arithmetic unique to Glassworm.
+# Variable-name-agnostic; covers both spaced and minified forms.
 GLASSWORM_DECODER_SIGS = [
-    b"w - 0x" + b"FE" + b"00",  # the subtraction that decodes range 1
-    b"w - 0x" + b"E01" + b"00 + 16",  # the subtraction that decodes range 2
-    b"0x" + b"FE" + b"00" + b" ?" + b" w - 0x",  # ternary pattern
+    b"- 0x" + b"FE" + b"00",  # range 1 decode subtraction
+    b"-0x" + b"FE" + b"00",  # range 1 decode (minified)
+    b"- 0x" + b"E01" + b"00 + 16",  # range 2 decode subtraction
+    b"-0x" + b"E01" + b"00+16",  # range 2 decode (minified)
 ]
 
 # Eval on decoded buffer — the execution sink.
