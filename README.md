@@ -37,6 +37,8 @@ That's it. No clone, no install, no venv. `uv` handles everything. If you don't 
 ```bash
 # Linux/macOS
 curl -LsSf https://astral.sh/uv/install.sh | sh
+# or, if you `brew`
+brew install uv
 
 # Windows (PowerShell)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
