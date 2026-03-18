@@ -128,13 +128,14 @@ def has_invisible_chars(data: bytes) -> list[int]:
         ):
             hits.append(i)
             i += 3
-        # U+E0100–U+E01EF: f3 a0 [84-87] [80-af]
+        # U+E0100–U+E01EF: f3 a0 [84-87] [80-bf*]
+        # *fourth byte capped at af only when third byte is 87
         elif (
             i + 3 < n
             and data[i] == 0xF3
             and data[i + 1] == 0xA0
             and 0x84 <= data[i + 2] <= 0x87
-            and 0x80 <= data[i + 3] <= 0xAF
+            and 0x80 <= data[i + 3] <= (0xAF if data[i + 2] == 0x87 else 0xBF)
         ):
             hits.append(i)
             i += 4
