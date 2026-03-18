@@ -1,0 +1,17 @@
+[project]
+name = "glassworm-detect"
+version = "0.1.0"
+description = "Detect Glassworm invisible Unicode supply chain attacks in source code"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "iodeslykos", email = "42@iodeslykos.com" },
+]
+keywords = ["security", "supply-chain", "unicode", "glassworm"]
+
+[project.scripts]
+glassworm-detect = "glassworm_detect:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
