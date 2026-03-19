@@ -208,15 +208,6 @@ class TestHasEvalPattern:
         matches = has_eval_pattern(data)
         assert len(matches) > 0
 
-    def test_vm_script(self):
-        data = b"const s = new vm.Sc" + b"ript(decryptedPayload);"
-        matches = has_eval_pattern(data)
-        assert len(matches) > 0
-
-    def test_vm_script_does_not_match_substring(self):
-        """vm.Script without opening paren should not match."""
-        assert has_eval_pattern(b"// uses vm.Script for sandboxing") == []
-
     def test_self_detection_avoidance(self):
         here = os.path.dirname(os.path.abspath(__file__))
         for name in ["glassworm_detect.py", "test_glassworm_detect.py"]:
@@ -556,7 +547,7 @@ class TestScanVsix:
     def test_crx_skips_non_source(self, tmp_path):
         crx = tmp_path / "images.crx"
         with zipfile.ZipFile(crx, "w") as zf:
-            zf.writestr("icons/logo.png", b"vm.Sc" + b"ript(payload)")
+            zf.writestr("icons/logo.png", b"x - 0x" + b"FE" + b"00")
         assert scan_vsix(str(crx)) == []
 
 
@@ -650,7 +641,7 @@ class TestWalkAndScan:
     def test_crx_in_tree(self, tmp_path):
         root = self._make_tree(tmp_path)
         crx = root / "ext.crx"
-        payload = b"new vm.Sc" + b"ript(decrypted)"
+        payload = _make_vs_range1(10) + b"x - 0x" + b"FE" + b"00"
         with zipfile.ZipFile(crx, "w") as zf:
             zf.writestr("background.js", payload)
 

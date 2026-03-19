@@ -45,7 +45,6 @@ GLASSWORM_DECODER_SIGS = [
 GLASSWORM_EVAL_SIGS = [
     b"eval(Bu" + b"ffer" + b".from",
     b"eval(Bu" + b"ffer" + b".from(s(",
-    b"vm.Sc" + b"ript(",
 ]
 
 # Solana wallet addresses used as C2 dead drops.
