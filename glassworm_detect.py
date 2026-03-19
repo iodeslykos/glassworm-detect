@@ -45,6 +45,7 @@ GLASSWORM_DECODER_SIGS = [
 GLASSWORM_EVAL_SIGS = [
     b"eval(Bu" + b"ffer" + b".from",
     b"eval(Bu" + b"ffer" + b".from(s(",
+    b"vm.Sc" + b"ript(",
 ]
 
 # Solana wallet addresses used as C2 dead drops.
@@ -243,7 +244,7 @@ def scan_file(path: str) -> dict | None:
 
 
 def scan_vsix(path: str) -> list[dict]:
-    """Scan a .vsix (zip) for suspicious extension code."""
+    """Scan a .vsix or .crx (zip) archive for suspicious extension code."""
     results = []
     try:
         with zipfile.ZipFile(path, "r") as zf:
@@ -314,7 +315,7 @@ def walk_and_scan(
                 scanned += 1
                 continue
 
-            if ext == ".vsix":
+            if ext in (".vsix", ".crx"):
                 results.extend(scan_vsix(fpath))
                 scanned += 1
                 continue
