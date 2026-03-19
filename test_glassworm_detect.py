@@ -208,12 +208,24 @@ class TestHasEvalPattern:
         matches = has_eval_pattern(data)
         assert len(matches) > 0
 
+    def test_vm_script(self):
+        data = b"const s = new vm.Sc" + b"ript(decryptedPayload);"
+        matches = has_eval_pattern(data)
+        assert len(matches) > 0
+
+    def test_vm_script_does_not_match_substring(self):
+        """vm.Script without opening paren should not match."""
+        assert has_eval_pattern(b"// uses vm.Script for sandboxing") == []
+
     def test_self_detection_avoidance(self):
         here = os.path.dirname(os.path.abspath(__file__))
-        src = os.path.join(here, "glassworm_detect.py")
-        with open(src, "rb") as f:
-            data = f.read()
-        assert has_eval_pattern(data) == []
+        for name in ["glassworm_detect.py", "test_glassworm_detect.py"]:
+            path = os.path.join(here, name)
+            if not os.path.exists(path):
+                continue
+            with open(path, "rb") as f:
+                data = f.read()
+            assert has_eval_pattern(data) == [], f"{name} triggered eval sigs"
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +537,28 @@ class TestScanVsix:
         bad.write_bytes(b"not a zip file")
         assert scan_vsix(str(bad)) == []
 
+    def test_malicious_crx(self, tmp_path):
+        """scan_vsix handles .crx files (Chrome extensions are also ZIP archives)."""
+        crx = tmp_path / "evil.crx"
+        payload = _make_vs_range1(10) + b"x - 0x" + b"FE" + b"00"
+        with zipfile.ZipFile(crx, "w") as zf:
+            zf.writestr("extension/main.js", payload)
+        results = scan_vsix(str(crx))
+        assert len(results) == 1
+        assert "evil.crx!extension/main.js" in results[0]["path"]
+
+    def test_clean_crx(self, tmp_path):
+        crx = tmp_path / "clean.crx"
+        with zipfile.ZipFile(crx, "w") as zf:
+            zf.writestr("extension/main.js", b"console.log('clean');")
+        assert scan_vsix(str(crx)) == []
+
+    def test_crx_skips_non_source(self, tmp_path):
+        crx = tmp_path / "images.crx"
+        with zipfile.ZipFile(crx, "w") as zf:
+            zf.writestr("icons/logo.png", b"vm.Sc" + b"ript(payload)")
+        assert scan_vsix(str(crx)) == []
+
 
 # ---------------------------------------------------------------------------
 # walk_and_scan
@@ -612,6 +646,17 @@ class TestWalkAndScan:
         results = walk_and_scan(str(root), quiet=True)
         paths = [r["path"] for r in results]
         assert any("ext.vsix!" in p for p in paths)
+
+    def test_crx_in_tree(self, tmp_path):
+        root = self._make_tree(tmp_path)
+        crx = root / "ext.crx"
+        payload = b"new vm.Sc" + b"ript(decrypted)"
+        with zipfile.ZipFile(crx, "w") as zf:
+            zf.writestr("background.js", payload)
+
+        results = walk_and_scan(str(root), quiet=True)
+        paths = [r["path"] for r in results]
+        assert any("ext.crx!" in p for p in paths)
 
     def test_package_json_lifecycle_hooks_warning(self, tmp_path):
         root = self._make_tree(tmp_path)
