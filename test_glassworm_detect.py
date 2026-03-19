@@ -14,6 +14,8 @@ from glassworm_detect import (
     has_eval_pattern,
     has_infrastructure_iocs,
     has_invisible_chars,
+    has_lifecycle_hooks,
+    has_obfuscation_markers,
     scan_file,
     scan_vsix,
     walk_and_scan,
@@ -237,12 +239,79 @@ class TestHasInfrastructureIocs:
         data = b"MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
         assert len(has_infrastructure_iocs(data)) > 0
 
+    def test_solana_rpc_method(self):
+        data = b'{"method":"getSignaturesForAddress","params":["wallet"]}'
+        assert len(has_infrastructure_iocs(data)) > 0
+
     def test_self_detection_avoidance(self):
         here = os.path.dirname(os.path.abspath(__file__))
         src = os.path.join(here, "glassworm_detect.py")
         with open(src, "rb") as f:
             data = f.read()
         assert has_infrastructure_iocs(data) == []
+
+
+# ---------------------------------------------------------------------------
+# has_obfuscation_markers
+# ---------------------------------------------------------------------------
+
+
+class TestHasObfuscationMarkers:
+    def test_clean_code(self):
+        assert has_obfuscation_markers(b"const x = 1; function foo() {}") == 0
+
+    def test_below_threshold(self):
+        data = b"var _0x1 = 1; var _0x2 = 2;"  # only 2 occurrences
+        assert has_obfuscation_markers(data) == 0
+
+    def test_at_threshold(self):
+        data = b" ".join(b"_0x%x" % i for i in range(20))
+        assert has_obfuscation_markers(data) == 20
+
+    def test_heavily_obfuscated(self):
+        data = b" ".join(b"_0x%x" % i for i in range(500))
+        assert has_obfuscation_markers(data) == 500
+
+    def test_self_detection_avoidance(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = os.path.join(here, "glassworm_detect.py")
+        with open(src, "rb") as f:
+            data = f.read()
+        assert has_obfuscation_markers(data) == 0
+
+
+# ---------------------------------------------------------------------------
+# has_lifecycle_hooks
+# ---------------------------------------------------------------------------
+
+
+class TestHasLifecycleHooks:
+    def test_clean_package_json(self):
+        data = b'{"name": "my-pkg", "scripts": {"test": "jest"}}'
+        assert has_lifecycle_hooks(data) == []
+
+    def test_preinstall(self):
+        data = b'{"scripts": {"preinstall": "node install.js"}}'
+        matches = has_lifecycle_hooks(data)
+        assert len(matches) == 1
+        assert "preinstall" in matches[0]
+
+    def test_postinstall(self):
+        data = b'{"scripts": {"postinstall": "node setup.js"}}'
+        matches = has_lifecycle_hooks(data)
+        assert len(matches) == 1
+        assert "postinstall" in matches[0]
+
+    def test_both_hooks(self):
+        data = b'{"scripts": {"preinstall": "node a.js", "postinstall": "node b.js"}}'
+        assert len(has_lifecycle_hooks(data)) == 2
+
+    def test_self_detection_avoidance(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = os.path.join(here, "glassworm_detect.py")
+        with open(src, "rb") as f:
+            data = f.read()
+        assert has_lifecycle_hooks(data) == []
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +389,33 @@ class TestScanBytes:
         assert "invisible_chars" in result
         assert "note" not in result
 
+    def test_obfuscation_alone_is_warning(self):
+        data = b" ".join(b"_0x%x" % i for i in range(30))
+        result = _scan_bytes(data)
+        assert "obfuscation" in result
+        assert "note" in result
+
+    def test_obfuscation_with_infra_is_hit(self):
+        obf = b" ".join(b"_0x%x" % i for i in range(30))
+        data = obf + b" 45.32.150.251"
+        result = _scan_bytes(data)
+        assert "obfuscation" in result
+        assert "infrastructure" in result
+        assert "note" not in result
+
+    def test_obfuscation_with_rpc_method_is_hit(self):
+        obf = b" ".join(b"_0x%x" % i for i in range(30))
+        data = obf + b" getSignaturesForAddress"
+        result = _scan_bytes(data)
+        assert "obfuscation" in result
+        assert "infrastructure" in result
+        assert "note" not in result
+
+    def test_rpc_method_alone_is_hit(self):
+        data = b'{"method":"getSignaturesForAddress"}'
+        result = _scan_bytes(data)
+        assert "infrastructure" in result
+
 
 # ---------------------------------------------------------------------------
 # _is_warn
@@ -337,6 +433,17 @@ class TestIsWarn:
 
     def test_empty_is_not_warn(self):
         assert not _is_warn({})
+
+    def test_obfuscation_warn_is_warn(self):
+        r = {
+            "obfuscation": 50,
+            "note": "javascript-obfuscator patterns without other IoCs",
+        }
+        assert _is_warn(r)
+
+    def test_obfuscation_with_infra_is_not_warn(self):
+        r = {"obfuscation": 50, "infrastructure": ["45.32.150.251"]}
+        assert not _is_warn(r)
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +603,38 @@ class TestWalkAndScan:
         results = walk_and_scan(str(root), quiet=True)
         paths = [r["path"] for r in results]
         assert any("ext.vsix!" in p for p in paths)
+
+    def test_package_json_lifecycle_hooks_warning(self, tmp_path):
+        root = self._make_tree(tmp_path)
+        pkg = b'{"scripts": {"preinstall": "node install.js"}}'
+        (root / "package.json").write_bytes(pkg)
+
+        results = walk_and_scan(str(root), quiet=True)
+        pkg_results = [r for r in results if r.get("package_json")]
+        assert len(pkg_results) == 1
+        assert "lifecycle_hooks" in pkg_results[0]
+        assert "note" in pkg_results[0]
+
+    def test_package_json_lifecycle_hooks_with_infra_is_hit(self, tmp_path):
+        root = self._make_tree(tmp_path)
+        pkg = b'{"scripts": {"preinstall": "node install.js"}} 45.32.150.251'
+        (root / "package.json").write_bytes(pkg)
+
+        results = walk_and_scan(str(root), quiet=True)
+        pkg_results = [r for r in results if r.get("package_json")]
+        assert len(pkg_results) == 1
+        assert "lifecycle_hooks" in pkg_results[0]
+        assert "infrastructure" in pkg_results[0]
+        assert "note" not in pkg_results[0]
+
+    def test_package_json_clean_ignored(self, tmp_path):
+        root = self._make_tree(tmp_path)
+        pkg = b'{"name": "my-pkg", "scripts": {"test": "jest"}}'
+        (root / "package.json").write_bytes(pkg)
+
+        results = walk_and_scan(str(root), quiet=True)
+        pkg_results = [r for r in results if r.get("package_json")]
+        assert len(pkg_results) == 0
 
     def test_empty_directory(self, tmp_path):
         empty = tmp_path / "empty"
