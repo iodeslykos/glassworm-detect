@@ -451,7 +451,7 @@ def print_results(results: list[dict], show_warnings: bool = False) -> None:
         else:
             print(
                 dim(
-                    f"{len(warns)} file(s) with high variation selector counts suppressed (likely emoji data). Use --show-warnings to see them."
+                    f"{len(warns)} file(s) with low-confidence indicators suppressed. Use --show-warnings to see them."
                 )
             )
 
