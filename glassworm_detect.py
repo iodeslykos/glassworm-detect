@@ -71,6 +71,20 @@ GLASSWORM_MEMO = [
     b"MemoSq4gqABAXKb96qnH8Tys" + b"NcWxMyWCqXgDLGmfcHr",
 ]
 
+# Solana RPC methods used for C2 resolution.
+GLASSWORM_RPC = [
+    b"getSignatures" + b"ForAddress",
+]
+
+# Suspicious npm lifecycle hooks (package.json context).
+GLASSWORM_LIFECYCLE_HOOKS = [
+    b'"pre' + b'install"',
+    b'"post' + b'install"',
+]
+
+# javascript-obfuscator _0x identifier prefix threshold.
+OBFUSCATION_THRESHOLD = 20
+
 SOURCE_EXTS = {
     ".js",
     ".ts",
@@ -163,8 +177,25 @@ def has_eval_pattern(data: bytes) -> list[str]:
 
 def has_infrastructure_iocs(data: bytes) -> list[str]:
     """Return matched Glassworm infrastructure IoCs (Solana, C2, crypto)."""
-    all_sigs = GLASSWORM_SOLANA + GLASSWORM_C2 + GLASSWORM_CRYPTO + GLASSWORM_MEMO
+    all_sigs = (
+        GLASSWORM_SOLANA
+        + GLASSWORM_C2
+        + GLASSWORM_CRYPTO
+        + GLASSWORM_MEMO
+        + GLASSWORM_RPC
+    )
     return [sig.decode() for sig in all_sigs if sig in data]
+
+
+def has_obfuscation_markers(data: bytes) -> int:
+    """Return count of javascript-obfuscator _0x identifiers, 0 if below threshold."""
+    count = data.count(b"_0x")
+    return count if count >= OBFUSCATION_THRESHOLD else 0
+
+
+def has_lifecycle_hooks(data: bytes) -> list[str]:
+    """Return matched npm lifecycle hook patterns."""
+    return [sig.decode() for sig in GLASSWORM_LIFECYCLE_HOOKS if sig in data]
 
 
 def _scan_bytes(data: bytes) -> dict:
@@ -187,6 +218,13 @@ def _scan_bytes(data: bytes) -> dict:
             elif len(offsets) >= 50:
                 findings["invisible_chars"] = len(offsets)
                 findings["note"] = "high count without decoder — verify manually"
+    obf_count = has_obfuscation_markers(data)
+    if obf_count:
+        findings["obfuscation"] = obf_count
+        if not (decoders or evals or infra):
+            findings["note"] = (
+                "javascript-obfuscator patterns without other IoCs — verify manually"
+            )
     return findings
 
 
@@ -246,6 +284,33 @@ def walk_and_scan(
                 if r:
                     r["init_json"] = True
                     results.append(r)
+                scanned += 1
+                continue
+
+            if fname == "package.json":
+                try:
+                    with open(fpath, "rb") as f:
+                        data = f.read()
+                except (OSError, PermissionError):
+                    scanned += 1
+                    continue
+                findings = _scan_bytes(data)
+                hooks = has_lifecycle_hooks(data)
+                if hooks:
+                    findings["lifecycle_hooks"] = hooks
+                    if not (
+                        findings.get("decoder_patterns")
+                        or findings.get("eval_patterns")
+                        or findings.get("infrastructure")
+                    ):
+                        findings.setdefault(
+                            "note",
+                            "npm lifecycle hooks — verify manually",
+                        )
+                if findings:
+                    findings["path"] = fpath
+                    findings["package_json"] = True
+                    results.append(findings)
                 scanned += 1
                 continue
 
@@ -336,8 +401,14 @@ def print_results(results: list[dict], show_warnings: bool = False) -> None:
                 parts.append(red(f"decoders={r['decoder_patterns']}"))
             if "eval_patterns" in r:
                 parts.append(red(f"eval={r['eval_patterns']}"))
+            if "obfuscation" in r:
+                parts.append(red(f"obfuscation=_0x×{r['obfuscation']}"))
+            if "lifecycle_hooks" in r:
+                parts.append(red(f"lifecycle_hooks={r['lifecycle_hooks']}"))
             if r.get("init_json"):
                 parts.append(yellow("init.json"))
+            if r.get("package_json"):
+                parts.append(yellow("package.json"))
             print(f"  {red('[HIT]')} {path}")
             for p in parts:
                 print(f"         {p}")
@@ -360,14 +431,23 @@ def print_results(results: list[dict], show_warnings: bool = False) -> None:
             print(yellow(f"{'=' * 60}"))
             print(
                 yellow(
-                    f" WARNINGS: {len(warns)} file(s) with high variation selector counts (likely emoji data)"
+                    f" WARNINGS: {len(warns)} file(s) with low-confidence indicators"
                 )
             )
             print(yellow(f"{'=' * 60}"))
             for r in warns:
-                count = r["invisible_chars"]
                 print(f"  {yellow('[WARN]')} {r['path']}")
-                print(f"         {yellow(f'invisible_chars={count}')}")
+                if "invisible_chars" in r:
+                    count = r["invisible_chars"]
+                    print(f"         {yellow(f'invisible_chars={count}')}")
+                if "obfuscation" in r:
+                    count = r["obfuscation"]
+                    print(f"         {yellow(f'obfuscation=_0x×{count}')}")
+                if "lifecycle_hooks" in r:
+                    hooks = r["lifecycle_hooks"]
+                    print(f"         {yellow(f'lifecycle_hooks={hooks}')}")
+                if "note" in r:
+                    print(f"         {dim(r['note'])}")
         else:
             print(
                 dim(
@@ -388,8 +468,10 @@ def main():
         epilog="""detects:
   - Glassworm decoder pattern (variation selector to byte subtraction arithmetic)
   - Eval execution sinks paired with decoder
-  - Glassworm infrastructure IoCs (Solana wallets, C2 IPs, crypto material)
+  - Glassworm infrastructure IoCs (Solana wallets, C2 IPs, RPC methods, crypto material)
   - Invisible Unicode variation selectors (when paired with decoder/eval)
+  - javascript-obfuscator patterns (_0x identifier density)
+  - Suspicious npm lifecycle hooks in package.json (preinstall/postinstall)
   - init.json files containing any of the above
   - Suspicious code inside .vsix archives
 
